@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {ENDPOINTS,ROUTER,CHAIN,rankNodes,measure,failover} from './dist/network.mjs';
+assert.equal(ENDPOINTS.length,11);assert.equal(new Set(ENDPOINTS).size,11);
+assert.equal(ROUTER,'0x3c91FD5247B050A1536F24D012a17a618EEFbfCA');assert.equal(CHAIN,'20181205');
+const nodes=[{url:'slow',ok:true,ms:90,chain:CHAIN,block:'100'},{url:'fast',ok:true,ms:10,chain:CHAIN,block:'100'},{url:'stale',ok:true,ms:1,chain:CHAIN,block:'90'},{url:'failed',ok:false},{url:'wrong',ok:true,ms:1,chain:'1',block:'900'}];
+assert.deepEqual(rankNodes(nodes).map(n=>n.url),['fast','slow']);assert.throws(()=>rankNodes([{ok:false}]));
+assert.throws(()=>rankNodes([{ok:true,chain:'1',block:'100'}]));
+const rows=await measure(async(url,method)=>{if(url===ENDPOINTS[0])throw Error('TLS failure');return method==='eth_chainId'?'0x'+BigInt(CHAIN).toString(16):'0x64'});
+assert.equal(rankNodes(rows).length,10);
+let tried=[];assert.equal(await failover(rankNodes(nodes),async n=>{tried.push(n.url);if(n.url==='fast')throw Error('timeout');return 'ok'}),'ok');
+assert.deepEqual(tried,['fast','slow']);await assert.rejects(failover(rankNodes(nodes),async()=>{throw Error('revert')}));
+console.log('PASS: fixed RPCs / Router / Chain ID, speed ranking, stale and wrong-chain exclusion, failed probes, failover');

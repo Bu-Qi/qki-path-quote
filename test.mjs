@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {encode,decode,uint,word,units,MAX} from './dist/abi.mjs';
+const a='0x'+'11'.repeat(20), b='0x'+'22'.repeat(20), c='0x'+'33'.repeat(20);
+const result=encode('1000000000000000000',[a,b,c]);
+assert.equal(result.slice(0,10),'0xd06ca61f');assert.equal(result.length,10+64*6);
+assert.equal(result.slice(74,138),word(64));assert.equal(result.slice(138,202),word(3));
+assert.deepEqual(decode('0x'+word(32)+word(3)+word(100)+word(90)+word(80),3),['100','90','80']);
+assert.throws(()=>decode('0x',2));assert.throws(()=>decode('0x'+word(32)+word(1)+word(1),2));
+for(const invalid of ['0','-1','1.2','1e18',(MAX+1n).toString()])assert.throws(()=>uint(invalid));
+assert.equal(uint(MAX.toString()),MAX);assert.throws(()=>encode('1',[a]));assert.throws(()=>encode('1',[a,a]));
+assert.equal(units('1234500',6),'1.2345');assert.equal(units('1',18),'0.000000000000000001');assert.equal(units('123',0),'123');
+console.log('PASS: ABI encoding / decoding, uint256 bounds, paths, precision');
