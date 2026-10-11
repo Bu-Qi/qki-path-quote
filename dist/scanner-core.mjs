@@ -23,13 +23,16 @@ export function enumerate(base,tokens,pairs,maxHops,limit){
   visit([start]);return {routes,truncated};
 }
 export function poolsFor(path,pairs){return path.slice(1).map((to,i)=>{const p=pairs.get(key(path[i],to));return {pair:p.pair,rin:p.token0===path[i]?p.r0:p.r1,rout:p.token0===path[i]?p.r1:p.r0}})}
-export async function scan({nodes,tokens,base,sender,maxHops=5,limit=2000,cap=MAX_UINT,signal,onProgress=()=>{},solve,read=(url,m,p)=>rpc(url,m,p,10000,signal)}){
+export function effectiveFunds(actual,override){return override===null||override===undefined?actual:override<actual?override:actual}
+export async function scan({nodes,tokens,base,sender,maxHops=5,limit=2000,cap=MAX_UINT,balanceOverride=null,allowanceOverride=null,signal,onProgress=()=>{},solve,read=(url,m,p)=>rpc(url,m,p,10000,signal)}){
   if(tokens.length<3||tokens.length>20)throw Error('每次请选择 3–20 个 Token');
   tokens.forEach(t=>address(t.address));address(base);
   if(!sender)throw Error('请填写用于只读兑换模拟的钱包地址');address(sender);
   if(new Set(tokens.map(t=>t.address.toLowerCase())).size!==tokens.length||!tokens.some(t=>t.address.toLowerCase()===base.toLowerCase()))throw Error('扫描列表重复或未包含起止币');
   if(!Number.isInteger(maxHops)||maxHops<3||maxHops>6||!Number.isInteger(limit)||limit<1||limit>20000)throw Error('跳数或扫描上限无效');
   if(cap<1n||cap>MAX_UINT)throw Error('资金上限无效');
+  if(balanceOverride!==null&&(balanceOverride<1n||balanceOverride>MAX_UINT))throw Error('自定义模拟余额无效');
+  if(allowanceOverride!==null&&(allowanceOverride<1n||allowanceOverride>MAX_UINT))throw Error('自定义模拟 allowance 无效');
   const call=async(url,m,p)=>{check(signal);const result=await read(url,m,p);check(signal);return result};
   onProgress('读取区块快照…');let node,block,hash,factory,blockTimestamp;
   for(const candidate of nodes){check(signal);try{
@@ -45,9 +48,10 @@ export async function scan({nodes,tokens,base,sender,maxHops=5,limit=2000,cap=MA
   const walletWord=sender.slice(2).toLowerCase().padStart(64,'0'),routerWord=ROUTER.slice(2).toLowerCase().padStart(64,'0');
   const [balanceHex,allowanceHex]=await Promise.all([contract(base,'0x70a08231'+walletWord),contract(base,'0xdd62ed3e'+walletWord+routerWord)]);
   const walletBalance=BigInt('0x'+words(balanceHex,1)[0]),routerAllowance=BigInt('0x'+words(allowanceHex,1)[0]);
-  if(walletBalance===0n)throw Error('该地址的起止币余额为 0，无法完成真实状态兑换模拟；这不代表 Token 被拉黑');
-  if(routerAllowance===0n)throw Error('该地址尚无此起止币的 Router 授权，无法验证兑换；这不代表 Token 被拉黑。本页面不会发起授权');
-  const requestedCap=cap;cap=[cap,walletBalance,routerAllowance].reduce((a,b)=>a<b?a:b);
+  if(walletBalance===0n)throw Error('该地址的起止币链上余额为 0，无法完成真实状态兑换模拟；自定义值不能替代链上资金');
+  if(routerAllowance===0n)throw Error('该地址的链上 Router allowance 为 0，无法验证兑换；自定义值不能替代链上授权');
+  const effectiveBalance=effectiveFunds(walletBalance,balanceOverride),effectiveAllowance=effectiveFunds(routerAllowance,allowanceOverride);
+  const requestedCap=cap;cap=[cap,effectiveBalance,effectiveAllowance].reduce((a,b)=>a<b?a:b);
   let decimals=null;try{const d=BigInt('0x'+words(await contract(base,'0x313ce567'),1)[0]);if(d<=255n)decimals=Number(d)}catch{check(signal)}
   const graphTokens=tokens.some(t=>t.address.toLowerCase()===WQKI)?tokens:[...tokens,{name:'WQKI',address:WQKI}];
   const pairs=new Map(),jobs=[];for(let i=0;i<graphTokens.length;i++)for(let j=i+1;j<graphTokens.length;j++)jobs.push([graphTokens[i].address.toLowerCase(),graphTokens[j].address.toLowerCase()]);
@@ -97,7 +101,7 @@ export async function scan({nodes,tokens,base,sender,maxHops=5,limit=2000,cap=MA
   }
   const finalBlock=await call(node.url,'eth_getBlockByNumber',[block,false]);
   if(finalBlock?.hash!==hash)throw Error('扫描期间区块发生重组，请重新扫描；本次结果已丢弃');
-  return {base:base.toLowerCase(),baseName:tokens.find(t=>t.address.toLowerCase()===base.toLowerCase()).name,decimals,chainId:CHAIN,router:ROUTER,block:BigInt(block).toString(),blockHash:hash,rpc:node.url,scannedAt:new Date().toISOString(),tokens,maxHops,limit,inputCap:cap.toString(),requestedInputCap:requestedCap===MAX_UINT?null:requestedCap.toString(),simulationSender:sender,walletBalanceRaw:walletBalance.toString(),routerAllowanceRaw:routerAllowance.toString(),gasPriceWei:GAS_PRICE_WEI.toString(),gasValuationPath,gasUnprofitable,tradeReverted,tradeUnverified,tradeFailures,pairCount:pairs.size,pathCount:routes.length,truncated,unresolved,quoteRejected,modelMismatch,results};
+  return {base:base.toLowerCase(),baseName:tokens.find(t=>t.address.toLowerCase()===base.toLowerCase()).name,decimals,chainId:CHAIN,router:ROUTER,block:BigInt(block).toString(),blockHash:hash,rpc:node.url,scannedAt:new Date().toISOString(),tokens,maxHops,limit,inputCap:cap.toString(),requestedInputCap:requestedCap===MAX_UINT?null:requestedCap.toString(),simulationSender:sender,walletBalanceRaw:walletBalance.toString(),routerAllowanceRaw:routerAllowance.toString(),customBalanceRaw:balanceOverride?.toString()??null,customAllowanceRaw:allowanceOverride?.toString()??null,effectiveBalanceRaw:effectiveBalance.toString(),effectiveAllowanceRaw:effectiveAllowance.toString(),gasPriceWei:GAS_PRICE_WEI.toString(),gasValuationPath,gasUnprofitable,tradeReverted,tradeUnverified,tradeFailures,pairCount:pairs.size,pathCount:routes.length,truncated,unresolved,quoteRejected,modelMismatch,results};
 }
 export function roi(row){return units((row.netProfit*1000000n/row.input).toString(),4)}
 export function filterResults(rows,minProfit,minRoi,order){
@@ -108,7 +112,7 @@ export function exportData(snapshot,rows,filters){
   return {metadata:{...metadata,filters,feePerHop:'0.3%',gasIncluded:true,gasCostSource:'eth_estimateGas at snapshot block',roiBasis:'estimated net profit',inputOptimizationBasis:'gross profit, not guaranteed net optimum',scope:'simple cycles; no repeated intermediate tokens or pools',optimizerBudgetPerPath:512,exportedCount:rows.length,amountEncoding:'raw integers are decimal strings',warning:'eth_call passed only for this sender, amount and block. Net profit subtracts estimated gas at 1000 gwei; other-base gas value uses a snapshot WQKI conversion quote. Transfer taxes and actual balance delta are not measured. No transaction broadcast or guarantee of future execution.'},results:rows.map(r=>({path:r.path,pathNames:r.path.map(a=>snapshot.tokens.find(t=>t.address.toLowerCase()===a)?.name??a),amountInRaw:r.input.toString(),amountOutRaw:r.output.toString(),grossProfitRaw:r.profit.toString(),netProfitRaw:r.netProfit.toString(),gasEstimate:r.gasEstimate.toString(),gasFeeQkiWei:r.gasFeeWei.toString(),gasFeeBaseRaw:r.gasFeeBase.toString(),netRoiPercent:roi(r),modelExact:r.exact,modelMaxProfitUpperRaw:r.upperProfit.toString(),routerQuoteVerified:true,tradeSimulation:r.tradeSimulation,pools:r.pools.map(p=>({pair:p.pair,reserveInRaw:p.rin.toString(),reserveOutRaw:p.rout.toString()}))}))};
 }
 export function toCSV(data){
-  const headers=['chainId','block','blockHash','scannedAt','baseToken','baseName','decimals','maxHops','inputCapRaw','pathLimit','scanTruncated','unresolvedPaths','quoteRejected','modelMismatch','pathNames','pathJSON','amountInRaw','amountOutRaw','grossProfitRaw','netRoiPercent','modelExact','modelMaxProfitUpperRaw','gasIncluded','simulationStatus','simulationSender','simulationMethod','simulationDeadline','amountOutMinRaw','gasPriceWei','estimatedGas','gasFeeQkiWei','gasFeeBaseRaw','netProfitRaw','gasValuationPath'];
+  const headers=['chainId','block','blockHash','scannedAt','baseToken','baseName','decimals','maxHops','inputCapRaw','walletBalanceRaw','routerAllowanceRaw','customBalanceRaw','customAllowanceRaw','effectiveBalanceRaw','effectiveAllowanceRaw','pathLimit','scanTruncated','unresolvedPaths','quoteRejected','modelMismatch','pathNames','pathJSON','amountInRaw','amountOutRaw','grossProfitRaw','netRoiPercent','modelExact','modelMaxProfitUpperRaw','gasIncluded','simulationStatus','simulationSender','simulationMethod','simulationDeadline','amountOutMinRaw','gasPriceWei','estimatedGas','gasFeeQkiWei','gasFeeBaseRaw','netProfitRaw','gasValuationPath'];
   const cell=x=>{let s=String(x??'');if(/^[\s]*[=+\-@]/.test(s)||/^[\t\r\n]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"'};
-  const m=data.metadata;return '\uFEFF'+[headers,...data.results.map(r=>[m.chainId,m.block,m.blockHash,m.scannedAt,m.base,m.baseName,m.decimals,m.maxHops,m.inputCap,m.limit,m.truncated,m.unresolved,m.quoteRejected,m.modelMismatch,r.pathNames.join(' → '),JSON.stringify(r.path),r.amountInRaw,r.amountOutRaw,r.grossProfitRaw,r.netRoiPercent,r.modelExact,r.modelMaxProfitUpperRaw,true,r.tradeSimulation?.status,m.simulationSender,r.tradeSimulation?.method,r.tradeSimulation?.deadline,r.tradeSimulation?.amountOutMinRaw,m.gasPriceWei,r.gasEstimate,r.gasFeeQkiWei,r.gasFeeBaseRaw,r.netProfitRaw,JSON.stringify(m.gasValuationPath)])].map(row=>row.map(cell).join(',')).join('\r\n');
+  const m=data.metadata;return '\uFEFF'+[headers,...data.results.map(r=>[m.chainId,m.block,m.blockHash,m.scannedAt,m.base,m.baseName,m.decimals,m.maxHops,m.inputCap,m.walletBalanceRaw,m.routerAllowanceRaw,m.customBalanceRaw,m.customAllowanceRaw,m.effectiveBalanceRaw,m.effectiveAllowanceRaw,m.limit,m.truncated,m.unresolved,m.quoteRejected,m.modelMismatch,r.pathNames.join(' → '),JSON.stringify(r.path),r.amountInRaw,r.amountOutRaw,r.grossProfitRaw,r.netRoiPercent,r.modelExact,r.modelMaxProfitUpperRaw,true,r.tradeSimulation?.status,m.simulationSender,r.tradeSimulation?.method,r.tradeSimulation?.deadline,r.tradeSimulation?.amountOutMinRaw,m.gasPriceWei,r.gasEstimate,r.gasFeeQkiWei,r.gasFeeBaseRaw,r.netProfitRaw,JSON.stringify(m.gasValuationPath)])].map(row=>row.map(cell).join(',')).join('\r\n');
 }

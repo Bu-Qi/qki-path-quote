@@ -7,13 +7,16 @@ const $=id=>document.getElementById(id);
 function el(parent,tag,value,cls){const e=document.createElement(tag);e.textContent=value;if(cls)e.className=cls;parent.append(e);return e}
 export function initScanner(getNodes){
   let controller=null,snapshot=null,visible=[],selectionTokens=[];
+  const controls=$('scanCap').closest('.scan-controls');
+  for(const [id,label,placeholder] of [['scanBalanceOverride','自定义模拟余额','留空：采用链上余额'],['scanAllowanceOverride','自定义模拟 allowance','留空：采用链上 allowance']]){const box=document.createElement('div'),title=document.createElement('label'),input=document.createElement('input');title.htmlFor=id;title.textContent=label+'（起止币 raw）';input.id=id;input.inputMode='numeric';input.placeholder=placeholder;box.append(title,input);controls.append(box)}
+  const overrideHint=document.createElement('p');overrideHint.className='hint';overrideHint.textContent='自定义余额与 allowance 只会收紧本次扫描的资金上限；不能替代链上真实余额或授权。';controls.after(overrideHint);
   function notice(s,error=false){$('scanStatus').textContent=s;$('scanStatus').className=error?'hint error':'hint'}
   function refresh(){
     const base=$('scanBase').value;selectionTokens=getTokens();$('scanBase').replaceChildren();$('scanTokens').replaceChildren();
     for(const t of selectionTokens){const option=el($('scanBase'),'option',t.name);option.value=t.address;const label=el($('scanTokens'),'label','','scan-check');const input=document.createElement('input');input.type='checkbox';input.value=t.address;input.checked=true;input.setAttribute('aria-label','扫描 '+t.name);label.prepend(input);el(label,'span',t.name);label.title=t.address}
     if(selectionTokens.some(t=>t.address===base))$('scanBase').value=base;
   }
-  function busy(value){$('startScan').disabled=value;$('stopScan').disabled=!value;for(const id of ['scanWallet','scanBase','scanHops','scanLimit','scanCap','refreshScanTokens','allScanTokens','noneScanTokens'])$(id).disabled=value;$('scanTokens').querySelectorAll('input').forEach(input=>input.disabled=value)}
+  function busy(value){$('startScan').disabled=value;$('stopScan').disabled=!value;for(const id of ['scanWallet','scanBase','scanHops','scanLimit','scanCap','scanBalanceOverride','scanAllowanceOverride','refreshScanTokens','allScanTokens','noneScanTokens'])$(id).disabled=value;$('scanTokens').querySelectorAll('input').forEach(input=>input.disabled=value)}
   function format(value){return snapshot.decimals===null?value.toString():units(value.toString(),snapshot.decimals)}
   function filters(){return {minimumNetProfit:$('scanMinProfit').value.trim()||'0',minimumRoiPercent:$('scanMinROI').value.trim()||'0',sort:$('scanSort').value}}
   function render(){
@@ -45,13 +48,13 @@ export function initScanner(getNodes){
       const sender=$('scanWallet').value.trim();if(!sender)throw Error('请先填写模拟钱包地址');address(sender);
       const base=$('scanBase').value,selected=new Set([...$('scanTokens').querySelectorAll('input:checked')].map(i=>i.value));selected.add(base);
       const tokens=selectionTokens.filter(t=>selected.has(t.address));if(tokens.length<3||tokens.length>20)throw Error('请选 3–20 个 Token（包含起止币）');
-      const maxHops=Number($('scanHops').value),limit=Number($('scanLimit').value),cap=$('scanCap').value.trim()?uint($('scanCap').value.trim()):MAX_UINT;
+      const maxHops=Number($('scanHops').value),limit=Number($('scanLimit').value),cap=$('scanCap').value.trim()?uint($('scanCap').value.trim()):MAX_UINT,balanceOverride=$('scanBalanceOverride').value.trim()?uint($('scanBalanceOverride').value.trim()):null,allowanceOverride=$('scanAllowanceOverride').value.trim()?uint($('scanAllowanceOverride').value.trim()):null;
       if(!Number.isInteger(limit)||limit<1||limit>20000)throw Error('路径上限必须是 1–20000 的整数');
       notice('准备扫描节点…');const nodes=await getNodes();if(signal.aborted)throw Error('扫描已取消');solver=workerSolver(signal);
-      snapshot=await scan({nodes,tokens,base,sender,maxHops,limit,cap,signal,solve:solver.solve,onProgress:notice});
+      snapshot=await scan({nodes,tokens,base,sender,maxHops,limit,cap,balanceOverride,allowanceOverride,signal,solve:solver.solve,onProgress:notice});
       $('scanSummary').textContent='快照 '+snapshot.scannedAt+' · Block '+snapshot.block+' · 起止币 '+snapshot.baseName+' · 最大 '+snapshot.maxHops+' 跳 · '+snapshot.pairCount+' 个非空池子 · '+snapshot.pathCount+' 条已扫描路径 · 输入上限 '+(snapshot.inputCap??'自动')+' raw。'+(snapshot.truncated?'已触及路径上限，只扫描了部分路径。':'已遍历所选 Token 与跳数范围内的简单循环路径。')+' 尚未确定有无正毛收益：'+snapshot.unresolved+'；Router 拒绝复核：'+snapshot.quoteRejected+'；模型不一致：'+snapshot.modelMismatch+'。';
       $('scanMinProfitLabel').textContent='最低预计净收益（'+snapshot.baseName+(snapshot.decimals===null?' · raw':'')+'）';
-      $('scanSummary').textContent+=' 模拟地址：'+snapshot.simulationSender+'；输入上限已受余额和授权约束。兑换回退：'+snapshot.tradeReverted+'；无法验证：'+snapshot.tradeUnverified+'；扣费不盈利：'+snapshot.gasUnprofitable+'。gas price 固定 1000 gwei。';
+      $('scanSummary').textContent+=' 模拟地址：'+snapshot.simulationSender+'；链上余额 '+snapshot.walletBalanceRaw+'，链上 allowance '+snapshot.routerAllowanceRaw+'；本次采用余额 '+snapshot.effectiveBalanceRaw+'，采用 allowance '+snapshot.effectiveAllowanceRaw+'。兑换回退：'+snapshot.tradeReverted+'；无法验证：'+snapshot.tradeUnverified+'；扣费不盈利：'+snapshot.gasUnprofitable+'。gas price 固定 1000 gwei。';
       for(const failure of snapshot.tradeFailures){const box=el($('scanFailures'),'div','','step');el(box,'div',failure.path.map(a=>snapshot.tokens.find(t=>t.address.toLowerCase()===a)?.name??a).join(' → '));el(box,'p',(failure.status==='reverted'?'兑换执行回退':failure.status==='nonpositive_net'?'扣费后不盈利':'无法验证')+'：'+failure.reason,'hint');el(box,'div','amountIn raw: '+failure.inputRaw,'raw')}
       if(!snapshot.tradeFailures.length)el($('scanFailures'),'p','没有记录到兑换失败的候选路径。','hint');
       render();notice('✓ 扫描完成 · '+snapshot.results.length+' 条路径模拟通过且预计净收益为正'+(snapshot.truncated?' · 未扫描全部路径':''));

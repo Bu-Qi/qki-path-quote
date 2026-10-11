@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {scan,key,enumerate,poolsFor,filterResults,exportData,toCSV} from './dist/scanner-core.mjs';
+import {scan,key,enumerate,poolsFor,effectiveFunds,filterResults,exportData,toCSV} from './dist/scanner-core.mjs';
 import {optimize,quote} from './dist/optimizer.mjs';
 import {word} from './dist/abi.mjs';
 import {CHAIN,ROUTER} from './dist/network.mjs';
@@ -54,6 +54,7 @@ const reverted=await scan({...options,read:async(url,m,p)=>{if(p[0]?.data?.start
 const unsupported=await scan({...options,read:async(url,m,p)=>{if(p[0]?.data?.startsWith('0x38ed1739')){const e=Error('node unavailable');e.rpcCode=-32601;throw e}return read(url,m,p)}});assert.equal(unsupported.results.length,0);assert.equal(unsupported.tradeUnverified,1);
 for(const selector of ['0x70a08231','0xdd62ed3e'])await assert.rejects(scan({...options,read:async(url,m,p)=>p[0]?.data?.startsWith(selector)?'0x'+word(0):read(url,m,p)}),/余额|授权/);
 const limited=await scan({...options,read:async(url,m,p)=>p[0]?.data?.startsWith('0xdd62ed3e')?'0x'+word(scale):read(url,m,p)});assert.equal(limited.inputCap,scale.toString());assert(limited.results.every(r=>r.input<=scale));
+assert.equal(effectiveFunds(10n,null),10n);assert.equal(effectiveFunds(10n,7n),7n);assert.equal(effectiveFunds(10n,12n),10n);
 assert.equal(failureType({rpcCode:-32000,rpcMessage:'execution reverted'}),'reverted');assert.equal(failureType({rpcCode:-32000,rpcMessage:'insufficient funds'}),'unverified');
 assert.throws(()=>encodeSwap(1n,[a,b,c,a],'bad',10n));
 assert.equal(GAS_PRICE_WEI,1000000000000n);assert.equal(gasCost(200000n),200000000000000000n);
