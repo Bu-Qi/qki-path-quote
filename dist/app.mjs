@@ -5,6 +5,7 @@ import {initUtilities} from './utilities.mjs';
 import {initScanner} from './scanner-ui.mjs';
 import {address} from './abi.mjs';
 import {simulate} from './simulation.mjs';
+import {initWallet} from './wallet.mjs';
 import {ENDPOINTS,ROUTER,CHAIN,rpc,quantity,measure,rankNodes,failover} from './network.mjs';
 const $=id=>document.getElementById(id);
 function paths(){return parsePath($('path').value)}
@@ -78,4 +79,5 @@ initScanner(async()=>{
   if(!ranked.length)throw Error('暂无可用 RPC');
   return [...ranked];
 });
+initWallet();
 speedtest();
