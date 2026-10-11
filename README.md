@@ -16,7 +16,7 @@ python3 -m http.server 8080 --directory dist
 - 扫描时可输入自定义模拟余额及 allowance；完整 eth_call 仍以链上真实状态为准。
 - 连接注入式 EIP-1193 钱包并切换或添加 QKI 网络。
 - 自定义授权数量、收款地址、amountOutMin、gas price 和有效期。
-- 支持 `swapExactTokensForTokens` 和 `swapExactTokensForTokensSupportingFeeOnTransferTokens`。
+- 页面以两个醒目的选项支持 `swapExactTokensForTokens` 和 `swapExactTokensForTokensSupportingFeeOnTransferTokens`。
 - 每笔授权与兑换均在钱包中确认。
 
 ## 测试
