@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {chainHex,gweiToWei,minimumOutput,slippageBps} from './dist/wallet.mjs';
-import {encodeApprove,encodeSwap} from './dist/trade-check.mjs';
+import {encodeApprove,encodeFeeSwap,encodeSwap} from './dist/trade-check.mjs';
 const token='0x835F6dF988B6f51c9477D49e96aDBbc644ba97a2',router='0x3c91FD5247B050A1536F24D012a17a618EEFbfCA',owner='0x1111111111111111111111111111111111111111';
 assert.equal(chainHex,'0x133f0d5');
 assert.equal(slippageBps('0.50'),50n);assert.equal(slippageBps('50'),5000n);assert.throws(()=>slippageBps('50.01'));
@@ -8,4 +8,5 @@ assert.equal(minimumOutput(10000n,50n),9950n);
 assert.equal(gweiToWei('1000'),1000000000000n);assert.equal(gweiToWei('0.000000001'),1n);assert.throws(()=>gweiToWei('0'));
 assert.match(encodeApprove(router,123n),/^0x095ea7b3[0-9a-f]{128}$/);
 const swap=encodeSwap(100n,[token,router],owner,999n,90n);assert.equal(swap.slice(0,10),'0x38ed1739');assert.equal(BigInt('0x'+swap.slice(74,138)),90n);
+const feeSwap=encodeFeeSwap(100n,[token,router],owner,999n,90n);assert.equal(feeSwap.slice(0,10),'0x5c11d795');assert.equal(feeSwap.slice(10),swap.slice(10));
 console.log('PASS: wallet chain, slippage, approval and swap calldata');

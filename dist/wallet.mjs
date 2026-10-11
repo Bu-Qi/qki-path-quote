@@ -1,6 +1,6 @@
 import {address,decode,encode,uint} from './abi.mjs';
 import {CHAIN,ENDPOINTS,ROUTER} from './network.mjs';
-import {encodeApprove,encodeSwap} from './trade-check.mjs';
+import {encodeApprove,encodeFeeSwap,encodeSwap} from './trade-check.mjs';
 import {parsePath} from './path.mjs';
 
 const CHAIN_HEX='0x'+BigInt(CHAIN).toString(16),GAS_PRICE_WEI=1000000000000n;
@@ -62,10 +62,13 @@ function addField(grid,id,label,placeholder,value=''){
 }
 function setupCustomFields(){
   const grid=document.querySelector('.wallet-grid');
+  const methodBox=document.createElement('div'),methodLabel=document.createElement('label'),method=document.createElement('select');methodLabel.htmlFor='swapMethod';methodLabel.textContent='兑换方法';method.id='swapMethod';for(const [value,label] of [['standard','标准 Token'],['fee','Fee Token / 转账扣税 Token']]){const option=document.createElement('option');option.value=value;option.textContent=label;method.append(option)}methodBox.append(methodLabel,method);grid.append(methodBox);
   addField(grid,'approvalAmount','自定义授权数量（raw）','留空：采用 amountIn');
   addField(grid,'swapRecipient','自定义收款地址','留空：采用当前钱包账户');
   addField(grid,'swapMinimumOverride','自定义 amountOutMin（raw）','留空：按报价和滑点计算');
   addField(grid,'swapGasPrice','自定义 gas price（gwei）','必须大于 0','1000');
+  const warning=document.createElement('p');warning.id='feeTokenWarning';warning.className='hint';warning.hidden=true;warning.textContent='Fee Token 模式使用 SupportingFeeOnTransferTokens 方法。getAmountsOut 不包含转账税，建议手动填写 amountOutMin；设置过高会导致交易回退。';grid.after(warning);
+  method.onchange=()=>{warning.hidden=method.value!=='fee'};
 }
 export function initWallet(){
   setupCustomFields();
@@ -89,12 +92,13 @@ export function initWallet(){
     const minutes=$('swapDeadline').value.trim();if(!/^\d+$/.test(minutes)||BigInt(minutes)<1n||BigInt(minutes)>1440n)throw Error('交易有效期必须是 1–1440 分钟');
     const deadline=BigInt(Math.floor(Date.now()/1000))+BigInt(minutes)*60n,recipient=$('swapRecipient').value.trim()?address($('swapRecipient').value.trim()):state.owner,gasPrice=gweiToWei($('swapGasPrice').value);
     $('swapQuote').value=quote.at(-1).toString();$('swapMinimum').value=minOut.toString();
-    setStatus('请在钱包中确认兑换；最低输出 '+minOut+' raw…');
-    const hash=await request('eth_sendTransaction',[{from:state.owner,to:ROUTER,value:'0x0',gasPrice:'0x'+gasPrice.toString(16),data:encodeSwap(state.amount,state.path,recipient,deadline,minOut)}]);
+    const feeMode=$('swapMethod').value==='fee',method=feeMode?'swapExactTokensForTokensSupportingFeeOnTransferTokens':'swapExactTokensForTokens',data=feeMode?encodeFeeSwap(state.amount,state.path,recipient,deadline,minOut):encodeSwap(state.amount,state.path,recipient,deadline,minOut);
+    setStatus('请在钱包中确认 '+method+'；最低输出 '+minOut+' raw…');
+    const hash=await request('eth_sendTransaction',[{from:state.owner,to:ROUTER,value:'0x0',gasPrice:'0x'+gasPrice.toString(16),data}]);
     $('walletTxHash').value=hash;setStatus('兑换已提交：'+hash+' · 等待链上确认…');const receipt=await waitReceipt(hash);
     if(!receipt){setStatus('兑换已提交，但 120 秒内未查询到回执：'+hash);return}
     if(BigInt(receipt.status??'0x0')!==1n)throw Error('兑换交易已上链但执行失败：'+hash);
-    setStatus('✓ 兑换已确认：'+hash);
+    setStatus('✓ '+method+' 已确认：'+hash);
   }catch(error){setStatus(txError(error),true)}});
   const p=provider();if(p?.on){p.on('accountsChanged',accounts=>{account=accounts?.[0]&&/^0x[0-9a-f]{40}$/i.test(accounts[0])?accounts[0]:'';renderAccount();setStatus(account?'钱包账户已切换，请刷新余额与授权':'钱包已断开')});p.on('chainChanged',()=>setStatus('钱包网络已变化，请重新检查 Chain ID 与余额'))}
 }
