@@ -24,7 +24,7 @@ export function enumerate(base,tokens,pairs,maxHops,limit){
 }
 export function poolsFor(path,pairs){return path.slice(1).map((to,i)=>{const p=pairs.get(key(path[i],to));return {pair:p.pair,rin:p.token0===path[i]?p.r0:p.r1,rout:p.token0===path[i]?p.r1:p.r0}})}
 export function effectiveFunds(actual,override){return override===null||override===undefined?actual:override<actual?override:actual}
-export async function scan({nodes,tokens,base,sender,maxHops=5,limit=2000,cap=MAX_UINT,balanceOverride=null,allowanceOverride=null,signal,onProgress=()=>{},solve,read=(url,m,p)=>rpc(url,m,p,10000,signal)}){
+export async function scan({nodes,tokens,base,sender,maxHops=5,limit=2000,cap=MAX_UINT,balanceOverride=null,allowanceOverride=null,gasPriceWei=GAS_PRICE_WEI,signal,onProgress=()=>{},solve,read=(url,m,p)=>rpc(url,m,p,10000,signal)}){
   if(tokens.length<3||tokens.length>20)throw Error('每次请选择 3–20 个 Token');
   tokens.forEach(t=>address(t.address));address(base);
   if(!sender)throw Error('请填写用于只读兑换模拟的钱包地址');address(sender);
@@ -33,6 +33,7 @@ export async function scan({nodes,tokens,base,sender,maxHops=5,limit=2000,cap=MA
   if(cap<1n||cap>MAX_UINT)throw Error('资金上限无效');
   if(balanceOverride!==null&&(balanceOverride<1n||balanceOverride>MAX_UINT))throw Error('自定义模拟余额无效');
   if(allowanceOverride!==null&&(allowanceOverride<1n||allowanceOverride>MAX_UINT))throw Error('自定义模拟 allowance 无效');
+  if(typeof gasPriceWei!=='bigint'||gasPriceWei<1n||gasPriceWei>MAX_UINT)throw Error('Gas Price 无效');
   const call=async(url,m,p)=>{check(signal);const result=await read(url,m,p);check(signal);return result};
   onProgress('读取区块快照…');let node,block,hash,factory,blockTimestamp;
   for(const candidate of nodes){check(signal);try{
@@ -84,11 +85,11 @@ export async function scan({nodes,tokens,base,sender,maxHops=5,limit=2000,cap=MA
     onProgress('只读模拟完整兑换 '+checked+' / '+routes.length+' · 已通过 '+results.length);
     const deadline=blockTimestamp+1200n;
     let gasEstimate,gasFeeWei,gasFeeBase;
-    const tx={from:sender,to:ROUTER,value:'0x0',gasPrice:'0x'+GAS_PRICE_WEI.toString(16),data:encodeSwap(best.input,path,sender,deadline)};
+    const tx={from:sender,to:ROUTER,value:'0x0',gasPrice:'0x'+gasPriceWei.toString(16),data:encodeSwap(best.input,path,sender,deadline)};
     try{
       const returned=decode(await call(node.url,'eth_call',[tx,block]),path.length).map(BigInt);
       if(returned.some((v,i)=>v!==quoted[i]))throw Error('兑换返回数量与报价不一致，无法验证');
-      gasEstimate=quantity(await call(node.url,'eth_estimateGas',[tx,block]));gasFeeWei=gasCost(gasEstimate);
+      gasEstimate=quantity(await call(node.url,'eth_estimateGas',[tx,block]));gasFeeWei=gasCost(gasEstimate,gasPriceWei);
       gasFeeBase=gasValuationPath.length===1?gasFeeWei:BigInt(decode(await contract(ROUTER,encode(gasFeeWei.toString(),gasValuationPath)),gasValuationPath.length).at(-1));
       if(gasFeeBase<=0n)throw Error('gas 费用换算为零，无法可靠计算净收益');
     }catch(error){
@@ -97,11 +98,11 @@ export async function scan({nodes,tokens,base,sender,maxHops=5,limit=2000,cap=MA
     }
     const netProfit=profit-gasFeeBase;
     if(netProfit<=0n){gasUnprofitable++;tradeFailures.push({path,inputRaw:best.input.toString(),status:'nonpositive_net',reason:'扣除预计 gas 费后净收益不为正：毛收益 '+profit+' raw，gas 费用 '+gasFeeBase+' raw（起止币）'});continue}
-    results.push({path,input:best.input,output,profit,netProfit,gasEstimate,gasFeeWei,gasFeeBase,upperProfit:best.upperProfit,exact:best.exact,pools,tradeSimulation:{status:'passed',method:'swapExactTokensForTokens',from:sender,to:sender,gasPriceWei:GAS_PRICE_WEI.toString(),amountOutMinRaw:(best.input+1n).toString(),deadline:deadline.toString()}});
+    results.push({path,input:best.input,output,profit,netProfit,gasEstimate,gasFeeWei,gasFeeBase,upperProfit:best.upperProfit,exact:best.exact,pools,tradeSimulation:{status:'passed',method:'swapExactTokensForTokens',from:sender,to:sender,gasPriceWei:gasPriceWei.toString(),amountOutMinRaw:(best.input+1n).toString(),deadline:deadline.toString()}});
   }
   const finalBlock=await call(node.url,'eth_getBlockByNumber',[block,false]);
   if(finalBlock?.hash!==hash)throw Error('扫描期间区块发生重组，请重新扫描；本次结果已丢弃');
-  return {base:base.toLowerCase(),baseName:tokens.find(t=>t.address.toLowerCase()===base.toLowerCase()).name,decimals,chainId:CHAIN,router:ROUTER,block:BigInt(block).toString(),blockHash:hash,rpc:node.url,scannedAt:new Date().toISOString(),tokens,maxHops,limit,inputCap:cap.toString(),requestedInputCap:requestedCap===MAX_UINT?null:requestedCap.toString(),simulationSender:sender,walletBalanceRaw:walletBalance.toString(),routerAllowanceRaw:routerAllowance.toString(),customBalanceRaw:balanceOverride?.toString()??null,customAllowanceRaw:allowanceOverride?.toString()??null,effectiveBalanceRaw:effectiveBalance.toString(),effectiveAllowanceRaw:effectiveAllowance.toString(),gasPriceWei:GAS_PRICE_WEI.toString(),gasValuationPath,gasUnprofitable,tradeReverted,tradeUnverified,tradeFailures,pairCount:pairs.size,pathCount:routes.length,truncated,unresolved,quoteRejected,modelMismatch,results};
+  return {base:base.toLowerCase(),baseName:tokens.find(t=>t.address.toLowerCase()===base.toLowerCase()).name,decimals,chainId:CHAIN,router:ROUTER,block:BigInt(block).toString(),blockHash:hash,rpc:node.url,scannedAt:new Date().toISOString(),tokens,maxHops,limit,inputCap:cap.toString(),requestedInputCap:requestedCap===MAX_UINT?null:requestedCap.toString(),simulationSender:sender,walletBalanceRaw:walletBalance.toString(),routerAllowanceRaw:routerAllowance.toString(),customBalanceRaw:balanceOverride?.toString()??null,customAllowanceRaw:allowanceOverride?.toString()??null,effectiveBalanceRaw:effectiveBalance.toString(),effectiveAllowanceRaw:effectiveAllowance.toString(),gasPriceWei:gasPriceWei.toString(),gasValuationPath,gasUnprofitable,tradeReverted,tradeUnverified,tradeFailures,pairCount:pairs.size,pathCount:routes.length,truncated,unresolved,quoteRejected,modelMismatch,results};
 }
 export function roi(row){return units((row.netProfit*1000000n/row.input).toString(),4)}
 export function filterResults(rows,minProfit,minRoi,order){
@@ -109,7 +110,7 @@ export function filterResults(rows,minProfit,minRoi,order){
 }
 export function exportData(snapshot,rows,filters){
   const {results,...metadata}=snapshot;
-  return {metadata:{...metadata,filters,feePerHop:'0.3%',gasIncluded:true,gasCostSource:'eth_estimateGas at snapshot block',roiBasis:'estimated net profit',inputOptimizationBasis:'gross profit, not guaranteed net optimum',scope:'simple cycles; no repeated intermediate tokens or pools',optimizerBudgetPerPath:512,exportedCount:rows.length,amountEncoding:'raw integers are decimal strings',warning:'eth_call passed only for this sender, amount and block. Net profit subtracts estimated gas at 1000 gwei; other-base gas value uses a snapshot WQKI conversion quote. Transfer taxes and actual balance delta are not measured. No transaction broadcast or guarantee of future execution.'},results:rows.map(r=>({path:r.path,pathNames:r.path.map(a=>snapshot.tokens.find(t=>t.address.toLowerCase()===a)?.name??a),amountInRaw:r.input.toString(),amountOutRaw:r.output.toString(),grossProfitRaw:r.profit.toString(),netProfitRaw:r.netProfit.toString(),gasEstimate:r.gasEstimate.toString(),gasFeeQkiWei:r.gasFeeWei.toString(),gasFeeBaseRaw:r.gasFeeBase.toString(),netRoiPercent:roi(r),modelExact:r.exact,modelMaxProfitUpperRaw:r.upperProfit.toString(),routerQuoteVerified:true,tradeSimulation:r.tradeSimulation,pools:r.pools.map(p=>({pair:p.pair,reserveInRaw:p.rin.toString(),reserveOutRaw:p.rout.toString()}))}))};
+  return {metadata:{...metadata,filters,feePerHop:'0.3%',gasIncluded:true,gasCostSource:'eth_estimateGas at snapshot block multiplied by the selected gasPriceWei',roiBasis:'estimated net profit',inputOptimizationBasis:'gross profit, not guaranteed net optimum',scope:'simple cycles; no repeated intermediate tokens or pools',optimizerBudgetPerPath:512,exportedCount:rows.length,amountEncoding:'raw integers are decimal strings',warning:'eth_call passed only for this sender, amount and block. Net profit subtracts estimated gas using the selected gas price; other-base gas value uses a snapshot WQKI conversion quote. Transfer taxes and actual balance delta are not measured. No transaction broadcast or guarantee of future execution.'},results:rows.map(r=>({path:r.path,pathNames:r.path.map(a=>snapshot.tokens.find(t=>t.address.toLowerCase()===a)?.name??a),amountInRaw:r.input.toString(),amountOutRaw:r.output.toString(),grossProfitRaw:r.profit.toString(),netProfitRaw:r.netProfit.toString(),gasEstimate:r.gasEstimate.toString(),gasFeeQkiWei:r.gasFeeWei.toString(),gasFeeBaseRaw:r.gasFeeBase.toString(),netRoiPercent:roi(r),modelExact:r.exact,modelMaxProfitUpperRaw:r.upperProfit.toString(),routerQuoteVerified:true,tradeSimulation:r.tradeSimulation,pools:r.pools.map(p=>({pair:p.pair,reserveInRaw:p.rin.toString(),reserveOutRaw:p.rout.toString()}))}))};
 }
 export function toCSV(data){
   const headers=['chainId','block','blockHash','scannedAt','baseToken','baseName','decimals','maxHops','inputCapRaw','walletBalanceRaw','routerAllowanceRaw','customBalanceRaw','customAllowanceRaw','effectiveBalanceRaw','effectiveAllowanceRaw','pathLimit','scanTruncated','unresolvedPaths','quoteRejected','modelMismatch','pathNames','pathJSON','amountInRaw','amountOutRaw','grossProfitRaw','netRoiPercent','modelExact','modelMaxProfitUpperRaw','gasIncluded','simulationStatus','simulationSender','simulationMethod','simulationDeadline','amountOutMinRaw','gasPriceWei','estimatedGas','gasFeeQkiWei','gasFeeBaseRaw','netProfitRaw','gasValuationPath'];

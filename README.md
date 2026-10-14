@@ -10,7 +10,7 @@ QKI Chain（Chain ID `20181205`）上的路径报价、循环路径扫描与钱�
 - 输出可直接调用的 `["a","b"]` path 格式。
 - 支持时间戳显示、Token decimals/raw 数量转换。
 - 搜索最佳输入数量，按“输出减输入”比较毛利。
-- 扫描更长的循环路径，扣除固定 1000 gwei gas 成本后计算净收益。
+- 扫描更长的循环路径，按用户填写的 Gas Price 估算 gas 成本并计算净收益。
 - 通过 `eth_call` 模拟路径是否可交易，并导出筛选结果。
 - 扫描时可输入自定义模拟余额及 allowance；完整 `eth_call` 仍以链上真实状态为准。
 - 连接注入式 EIP-1193 钱包并切换或添加 QKI 网络。
@@ -41,4 +41,4 @@ node wallet-test.mjs
 
 - Router: `0x3c91FD5247B050A1536F24D012a17a618EEFbfCA`
 - Chain ID: `20181205`
-- Gas price: 默认 `1000 gwei`
+- Gas price: 扫描与交易页面默认 `1000 Gwei`，均可自定义
